@@ -771,6 +771,62 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/contracts/{id}/events.csv:
+    get:
+      tags: [Events]
+      summary: Export contract events as CSV
+      operationId: exportContractEventsCSV
+      security:
+        - ApiKeyAuth: [read:contracts]
+      parameters:
+        - $ref: "#/components/parameters/ContractID"
+        - $ref: "#/components/parameters/NetworkParam"
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Event type filter.
+        - name: topic
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Match events whose decoded topics contain this value.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          description: Lower ledger bound (inclusive).
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          description: Upper ledger bound (inclusive).
+        - name: in_successful_call
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Filter by whether the event was emitted in a successful call.
+      responses:
+        "200":
+          description: CSV export of matching contract events.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "422":
+          $ref: "#/components/responses/InvalidInput"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/contracts/{id}/invocations:
     get:
       tags: [Invocations]

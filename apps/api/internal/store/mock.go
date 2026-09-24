@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -53,15 +56,18 @@ type MockStore struct {
 	RecordContractVersionErr    error
 	ListContractVersionsErr     error
 	GetLatestContractVersionErr error
-	InsertFailedEventErr error
-	ListFailedEventsErr  error
-	GetFailedEventErr    error
-	DeleteFailedEventErr error
+	InsertFailedEventErr        error
+	ListFailedEventsErr         error
+	GetFailedEventErr           error
+	DeleteFailedEventErr        error
 }
 
 func (m *MockStore) UpsertLabel(_ context.Context, label Label) error {
 	for i, existing := range m.labels {
-		if existing.Label == label.Label && (label.Public || existing.WorkspaceID == label.WorkspaceID) { m.labels[i] = label; return nil }
+		if existing.Label == label.Label && (label.Public || existing.WorkspaceID == label.WorkspaceID) {
+			m.labels[i] = label
+			return nil
+		}
 	}
 	m.labels = append(m.labels, label)
 	return nil
@@ -71,15 +77,27 @@ func (m *MockStore) ListLabels(_ context.Context, workspaceID, query string) ([]
 	query = strings.ToLower(query)
 	var out []Label
 	for _, label := range m.labels {
-		if !label.Public && label.WorkspaceID != workspaceID { continue }
-		if query == "" || strings.Contains(strings.ToLower(label.Label), query) || strings.Contains(strings.ToLower(label.Value), query) { out = append(out, label) }
+		if !label.Public && label.WorkspaceID != workspaceID {
+			continue
+		}
+		if query == "" || strings.Contains(strings.ToLower(label.Label), query) || strings.Contains(strings.ToLower(label.Value), query) {
+			out = append(out, label)
+		}
 	}
 	return out, nil
 }
 
 func (m *MockStore) ResolveLabel(_ context.Context, workspaceID, query string) (Label, error) {
-	for _, label := range m.labels { if label.Public && strings.EqualFold(label.Label, query) { return label, nil } }
-	for _, label := range m.labels { if !label.Public && label.WorkspaceID == workspaceID && strings.EqualFold(label.Label, query) { return label, nil } }
+	for _, label := range m.labels {
+		if label.Public && strings.EqualFold(label.Label, query) {
+			return label, nil
+		}
+	}
+	for _, label := range m.labels {
+		if !label.Public && label.WorkspaceID == workspaceID && strings.EqualFold(label.Label, query) {
+			return label, nil
+		}
+	}
 	return Label{}, ErrNotFound
 }
 
@@ -287,6 +305,68 @@ func jsonValueEqual(a, b any) bool {
 		return false
 	}
 	return string(ab) == string(bb)
+}
+
+func (m *MockStore) StreamEventsCSV(_ context.Context, contractID string, f EventFilters, w io.Writer) error {
+	if m.ListEventsErr != nil {
+		return m.ListEventsErr
+	}
+	csvWriter := csv.NewWriter(w)
+	defer csvWriter.Flush()
+
+	if err := csvWriter.Write([]string{
+		"id", "contract_id", "network", "ledger", "ledger_closed_at", "tx_hash",
+		"type", "topic_xdr", "value_xdr", "topic_decoded", "value_decoded", "in_successful_call",
+	}); err != nil {
+		return err
+	}
+
+	for _, e := range m.events {
+		if e.ContractID != contractID {
+			continue
+		}
+		if f.Network != "" && e.Network != f.Network {
+			continue
+		}
+		if f.Type != "" && e.Type != f.Type {
+			continue
+		}
+		if f.Topic != "" && !topicDecodedContains(e.TopicDecoded, f.Topic) {
+			continue
+		}
+		if f.From != 0 && e.Ledger < f.From {
+			continue
+		}
+		if f.To != 0 && e.Ledger > f.To {
+			continue
+		}
+		if f.InSuccessfulCall != nil && e.InSuccessfulCall != *f.InSuccessfulCall {
+			continue
+		}
+
+		topicXDR, _ := json.Marshal(e.TopicXDR)
+		topicDec, _ := json.Marshal(e.TopicDecoded)
+		valDec, _ := json.Marshal(e.ValueDecoded)
+
+		record := []string{
+			e.ID,
+			e.ContractID,
+			e.Network,
+			fmt.Sprintf("%d", e.Ledger),
+			e.LedgerClosedAt.UTC().Format(time.RFC3339),
+			e.TxHash,
+			e.Type,
+			string(topicXDR),
+			e.ValueXDR,
+			string(topicDec),
+			string(valDec),
+			fmt.Sprintf("%t", e.InSuccessfulCall),
+		}
+		if err := csvWriter.Write(record); err != nil {
+			return err
+		}
+	}
+	return csvWriter.Error()
 }
 
 func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, f InvocationFilters) ([]Invocation, string, error) {

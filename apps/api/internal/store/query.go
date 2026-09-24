@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -123,6 +125,12 @@ type QueryStore interface {
 	// the ascending paginated list.
 	RecentInvocations(ctx context.Context, contractID string, limit int) ([]Invocation, error)
 
+	// StreamEventsCSV streams events for a contract as CSV to the provided
+	// writer. It applies the same filters as ListEvents but does not buffer
+	// all rows in memory. The caller is responsible for setting appropriate
+	// HTTP headers (Content-Type: text/csv, Content-Disposition).
+	StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) error
+
 	// ContractFirstLedger returns the earliest ledger for which the contract
 	// has indexed data (events or invocations). It returns 0 when nothing has
 	// been indexed yet, letting callers fall back to the contract's
@@ -238,6 +246,85 @@ func topicFilterJSON(topic string) string {
 		return "[]"
 	}
 	return string(b)
+}
+
+func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) error {
+	args := []any{contractID, f.Network, f.Type, f.From, f.To}
+	dynamicClauses := ""
+	if f.Topic != "" {
+		args = append(args, topicFilterJSON(f.Topic))
+		dynamicClauses += fmt.Sprintf("  AND topic_decoded @> $%d::jsonb\n", len(args))
+	}
+	if f.InSuccessfulCall != nil {
+		args = append(args, *f.InSuccessfulCall)
+		dynamicClauses += fmt.Sprintf("  AND in_successful_call = $%d\n", len(args))
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, contract_id, network, ledger, ledger_closed_at, tx_hash, type,
+		       topic_xdr, value_xdr, topic_decoded, value_decoded,
+		       in_successful_call, inserted_at
+		FROM events
+		WHERE contract_id = $1
+		  AND ($2 = '' OR network = $2)
+		  AND ($3 = '' OR type = $3)
+		  AND ($4 = 0   OR ledger >= $4)
+		  AND ($5 = 0   OR ledger <= $5)
+`+dynamicClauses+`		ORDER BY ledger ASC, id ASC`,
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("stream events csv: %w", err)
+	}
+	defer rows.Close()
+
+	csvWriter := csv.NewWriter(w)
+	defer csvWriter.Flush()
+
+	// Write header
+	if err := csvWriter.Write([]string{
+		"id", "contract_id", "network", "ledger", "ledger_closed_at", "tx_hash",
+		"type", "topic_xdr", "value_xdr", "topic_decoded", "value_decoded", "in_successful_call",
+	}); err != nil {
+		return err
+	}
+
+	for rows.Next() {
+		var e Event
+		var topicXDR, topicDec, valDec []byte
+		if err := rows.Scan(
+			&e.ID, &e.ContractID, &e.Network, &e.Ledger, &e.LedgerClosedAt, &e.TxHash, &e.Type,
+			&topicXDR, &e.ValueXDR, &topicDec, &valDec,
+			&e.InSuccessfulCall, &e.InsertedAt,
+		); err != nil {
+			return err
+		}
+
+		topicXDRStr := string(topicXDR)
+		topicDecStr := string(topicDec)
+		valDecStr := string(valDec)
+
+		record := []string{
+			e.ID,
+			e.ContractID,
+			e.Network,
+			fmt.Sprintf("%d", e.Ledger),
+			e.LedgerClosedAt.UTC().Format(time.RFC3339),
+			e.TxHash,
+			e.Type,
+			topicXDRStr,
+			e.ValueXDR,
+			topicDecStr,
+			valDecStr,
+			fmt.Sprintf("%t", e.InSuccessfulCall),
+		}
+		if err := csvWriter.Write(record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return csvWriter.Error()
 }
 
 // ---- RecentEvents -----------------------------------------------------------
