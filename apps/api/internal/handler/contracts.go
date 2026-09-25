@@ -390,23 +390,11 @@ func (h *Handler) ExportEventsCSV(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, CodeInvalidInput, "network must be one of: testnet, mainnet, futurenet, standalone")
 		return
 	}
-	var inSuccess *bool
-	if param := r.URL.Query().Get("in_successful_call"); param != "" {
-		if param == "true" {
-			v := true
-			inSuccess = &v
-		} else if param == "false" {
-			v := false
-			inSuccess = &v
-		}
-	}
 	f := store.EventFilters{
-		Type:             r.URL.Query().Get("type"),
-		Network:          network,
-		Topic:            strings.TrimSpace(r.URL.Query().Get("topic")),
-		From:             uint32Query(r, "from"),
-		To:               uint32Query(r, "to"),
-		InSuccessfulCall: inSuccess,
+		Type:    r.URL.Query().Get("type"),
+		Network: network,
+		From:    uint32Query(r, "from"),
+		To:      uint32Query(r, "to"),
 	}
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

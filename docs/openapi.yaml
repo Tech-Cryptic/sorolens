@@ -787,12 +787,6 @@ paths:
           schema:
             type: string
           description: Event type filter.
-        - name: topic
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Match events whose decoded topics contain this value.
         - name: from
           in: query
           required: false
@@ -809,12 +803,6 @@ paths:
             format: int32
             minimum: 1
           description: Upper ledger bound (inclusive).
-        - name: in_successful_call
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: Filter by whether the event was emitted in a successful call.
       responses:
         "200":
           description: CSV export of matching contract events.

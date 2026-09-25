@@ -125,10 +125,8 @@ type QueryStore interface {
 	// the ascending paginated list.
 	RecentInvocations(ctx context.Context, contractID string, limit int) ([]Invocation, error)
 
-	// StreamEventsCSV streams events for a contract as CSV to the provided
-	// writer. It applies the same filters as ListEvents but does not buffer
-	// all rows in memory. The caller is responsible for setting appropriate
-	// HTTP headers (Content-Type: text/csv, Content-Disposition).
+	// StreamEventsCSV streams contract events as CSV without buffering all rows.
+	// The caller is responsible for setting appropriate HTTP headers.
 	StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) error
 
 	// ContractFirstLedger returns the earliest ledger for which the contract
@@ -249,16 +247,6 @@ func topicFilterJSON(topic string) string {
 }
 
 func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) error {
-	args := []any{contractID, f.Network, f.Type, f.From, f.To}
-	dynamicClauses := ""
-	if f.Topic != "" {
-		args = append(args, topicFilterJSON(f.Topic))
-		dynamicClauses += fmt.Sprintf("  AND topic_decoded @> $%d::jsonb\n", len(args))
-	}
-	if f.InSuccessfulCall != nil {
-		args = append(args, *f.InSuccessfulCall)
-		dynamicClauses += fmt.Sprintf("  AND in_successful_call = $%d\n", len(args))
-	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, contract_id, network, ledger, ledger_closed_at, tx_hash, type,
 		       topic_xdr, value_xdr, topic_decoded, value_decoded,
@@ -269,8 +257,8 @@ func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, 
 		  AND ($3 = '' OR type = $3)
 		  AND ($4 = 0   OR ledger >= $4)
 		  AND ($5 = 0   OR ledger <= $5)
-`+dynamicClauses+`		ORDER BY ledger ASC, id ASC`,
-		args...,
+		ORDER BY ledger ASC, id ASC`,
+		contractID, f.Network, f.Type, f.From, f.To,
 	)
 	if err != nil {
 		return fmt.Errorf("stream events csv: %w", err)

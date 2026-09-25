@@ -56,18 +56,15 @@ type MockStore struct {
 	RecordContractVersionErr    error
 	ListContractVersionsErr     error
 	GetLatestContractVersionErr error
-	InsertFailedEventErr        error
-	ListFailedEventsErr         error
-	GetFailedEventErr           error
-	DeleteFailedEventErr        error
+	InsertFailedEventErr error
+	ListFailedEventsErr  error
+	GetFailedEventErr    error
+	DeleteFailedEventErr error
 }
 
 func (m *MockStore) UpsertLabel(_ context.Context, label Label) error {
 	for i, existing := range m.labels {
-		if existing.Label == label.Label && (label.Public || existing.WorkspaceID == label.WorkspaceID) {
-			m.labels[i] = label
-			return nil
-		}
+		if existing.Label == label.Label && (label.Public || existing.WorkspaceID == label.WorkspaceID) { m.labels[i] = label; return nil }
 	}
 	m.labels = append(m.labels, label)
 	return nil
@@ -77,27 +74,15 @@ func (m *MockStore) ListLabels(_ context.Context, workspaceID, query string) ([]
 	query = strings.ToLower(query)
 	var out []Label
 	for _, label := range m.labels {
-		if !label.Public && label.WorkspaceID != workspaceID {
-			continue
-		}
-		if query == "" || strings.Contains(strings.ToLower(label.Label), query) || strings.Contains(strings.ToLower(label.Value), query) {
-			out = append(out, label)
-		}
+		if !label.Public && label.WorkspaceID != workspaceID { continue }
+		if query == "" || strings.Contains(strings.ToLower(label.Label), query) || strings.Contains(strings.ToLower(label.Value), query) { out = append(out, label) }
 	}
 	return out, nil
 }
 
 func (m *MockStore) ResolveLabel(_ context.Context, workspaceID, query string) (Label, error) {
-	for _, label := range m.labels {
-		if label.Public && strings.EqualFold(label.Label, query) {
-			return label, nil
-		}
-	}
-	for _, label := range m.labels {
-		if !label.Public && label.WorkspaceID == workspaceID && strings.EqualFold(label.Label, query) {
-			return label, nil
-		}
-	}
+	for _, label := range m.labels { if label.Public && strings.EqualFold(label.Label, query) { return label, nil } }
+	for _, label := range m.labels { if !label.Public && label.WorkspaceID == workspaceID && strings.EqualFold(label.Label, query) { return label, nil } }
 	return Label{}, ErrNotFound
 }
 
@@ -331,19 +316,12 @@ func (m *MockStore) StreamEventsCSV(_ context.Context, contractID string, f Even
 		if f.Type != "" && e.Type != f.Type {
 			continue
 		}
-		if f.Topic != "" && !topicDecodedContains(e.TopicDecoded, f.Topic) {
-			continue
-		}
 		if f.From != 0 && e.Ledger < f.From {
 			continue
 		}
 		if f.To != 0 && e.Ledger > f.To {
 			continue
 		}
-		if f.InSuccessfulCall != nil && e.InSuccessfulCall != *f.InSuccessfulCall {
-			continue
-		}
-
 		topicXDR, _ := json.Marshal(e.TopicXDR)
 		topicDec, _ := json.Marshal(e.TopicDecoded)
 		valDec, _ := json.Marshal(e.ValueDecoded)
