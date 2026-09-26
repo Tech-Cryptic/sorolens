@@ -250,17 +250,9 @@ func (h *Handler) snapshotStorage(ctx context.Context, contractID string) ([]sto
 }
 
 // snapshotFilename builds a safe Content-Disposition filename from the
-// contract ID.
+// contract ID. The ID is attacker-controlled on reads, so anything outside
+// the base64-ish contract alphabet is replaced to keep the header well-formed.
 func snapshotFilename(contractID string) string {
-	return sanitizeFilenamePart(contractID) + "-snapshot.json"
-}
-
-// sanitizeFilenamePart maps a contract ID to the base64-ish alphabet a
-// Content-Disposition filename is built from. The ID is attacker-controlled on
-// reads, so anything else is replaced to keep the header well-formed: a quote
-// would otherwise terminate the filename early and a path separator would let a
-// caller pick where the file lands.
-func sanitizeFilenamePart(contractID string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
@@ -272,7 +264,7 @@ func sanitizeFilenamePart(contractID string) string {
 	if safe == "" {
 		safe = "contract"
 	}
-	return safe
+	return safe + "-snapshot.json"
 }
 
 // acceptsGzip reports whether the Accept-Encoding header advertises gzip with

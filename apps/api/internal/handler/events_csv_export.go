@@ -47,7 +47,7 @@ func (h *Handler) ExportEventsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Content-Disposition carries the contract id, which is attacker-controlled
-	// on a read: sanitizeFilenamePart keeps the header well-formed.
+	// on a read: eventsCSVFilename keeps the header well-formed.
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", eventsCSVFilename(contractID)))
 	w.Header().Set("Cache-Control", "no-store")
@@ -119,7 +119,24 @@ func optionalLedgerQuery(r *http.Request, key string) (uint32, error) {
 	return uint32(n), nil
 }
 
-// eventsCSVFilename builds the download name for an event export.
+// eventsCSVFilename builds the download name for an event export. The contract
+// ID embedded in it is attacker-controlled on reads, so anything outside the
+// base64-ish contract alphabet is replaced to keep the Content-Disposition
+// header well-formed: a quote would otherwise terminate the filename early and
+// a path separator would let a caller pick where the file lands. The mapping
+// mirrors snapshotFilename in snapshot_export.go rather than sharing a helper,
+// so this change stays inside the CSV-export issue's file scope.
 func eventsCSVFilename(contractID string) string {
-	return sanitizeFilenamePart(contractID) + "-events.csv"
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, contractID)
+	if safe == "" {
+		safe = "contract"
+	}
+	return safe + "-events.csv"
 }
