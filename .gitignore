@@ -16,6 +16,10 @@ coverage/
 # Rust
 target/
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Go
 .bin/
 *.exe

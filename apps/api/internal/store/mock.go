@@ -2,10 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -292,59 +290,36 @@ func jsonValueEqual(a, b any) bool {
 	return string(ab) == string(bb)
 }
 
-func (m *MockStore) StreamEventsCSV(_ context.Context, contractID string, f EventFilters, w io.Writer) error {
+func (m *MockStore) StreamEventsCSV(_ context.Context, contractID string, f EventFilters, w io.Writer) (err error) {
 	if m.ListEventsErr != nil {
 		return m.ListEventsErr
 	}
-	csvWriter := csv.NewWriter(w)
-	defer csvWriter.Flush()
-
-	if err := csvWriter.Write([]string{
-		"id", "contract_id", "network", "ledger", "ledger_closed_at", "tx_hash",
-		"type", "topic_xdr", "value_xdr", "topic_decoded", "value_decoded", "in_successful_call",
-	}); err != nil {
+	csvWriter, err := newEventsCSVWriter(w)
+	if err != nil {
 		return err
 	}
+	defer flushEventsCSV(csvWriter, &err)
 
+	// Copy before sorting: m.events is shared with every other reader, and the
+	// export order must match the Postgres query's ORDER BY rather than the
+	// order events happened to be inserted in.
+	matched := make([]Event, 0, len(m.events))
 	for _, e := range m.events {
-		if e.ContractID != contractID {
-			continue
+		if e.ContractID == contractID && matchesEventFilters(e, f) {
+			matched = append(matched, e)
 		}
-		if f.Network != "" && e.Network != f.Network {
-			continue
-		}
-		if f.Type != "" && e.Type != f.Type {
-			continue
-		}
-		if f.From != 0 && e.Ledger < f.From {
-			continue
-		}
-		if f.To != 0 && e.Ledger > f.To {
-			continue
-		}
-		topicXDR, _ := json.Marshal(e.TopicXDR)
-		topicDec, _ := json.Marshal(e.TopicDecoded)
-		valDec, _ := json.Marshal(e.ValueDecoded)
+	}
+	sort.SliceStable(matched, func(i, j int) bool { return lessEventOrder(matched[i], matched[j]) })
 
-		record := []string{
-			e.ID,
-			e.ContractID,
-			e.Network,
-			fmt.Sprintf("%d", e.Ledger),
-			e.LedgerClosedAt.UTC().Format(time.RFC3339),
-			e.TxHash,
-			e.Type,
-			string(topicXDR),
-			e.ValueXDR,
-			string(topicDec),
-			string(valDec),
-			fmt.Sprintf("%t", e.InSuccessfulCall),
-		}
-		if err := csvWriter.Write(record); err != nil {
+	var row []string
+	for _, e := range matched {
+		row = eventCSVRecord(e, eventJSON(e.TopicXDR), eventJSON(e.TopicDecoded), eventJSON(e.ValueDecoded))
+		if err := csvWriter.Write(row); err != nil {
 			return err
 		}
 	}
-	return csvWriter.Error()
+	// flushEventsCSV reports any buffered or flush-time write failure.
+	return nil
 }
 
 func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, f InvocationFilters) ([]Invocation, string, error) {

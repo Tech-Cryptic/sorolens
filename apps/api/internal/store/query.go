@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -246,7 +245,7 @@ func topicFilterJSON(topic string) string {
 	return string(b)
 }
 
-func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) error {
+func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, f EventFilters, w io.Writer) (err error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, contract_id, network, ledger, ledger_closed_at, tx_hash, type,
 		       topic_xdr, value_xdr, topic_decoded, value_decoded,
@@ -265,17 +264,15 @@ func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, 
 	}
 	defer rows.Close()
 
-	csvWriter := csv.NewWriter(w)
-	defer csvWriter.Flush()
-
-	// Write header
-	if err := csvWriter.Write([]string{
-		"id", "contract_id", "network", "ledger", "ledger_closed_at", "tx_hash",
-		"type", "topic_xdr", "value_xdr", "topic_decoded", "value_decoded", "in_successful_call",
-	}); err != nil {
-		return err
+	csvWriter, err := newEventsCSVWriter(w)
+	if err != nil {
+		return fmt.Errorf("stream events csv: %w", err)
 	}
+	defer flushEventsCSV(csvWriter, &err)
 
+	// The JSON columns are passed through as stored: re-encoding them here
+	// would reorder object keys and could disagree with the stored text.
+	var row []string
 	for rows.Next() {
 		var e Event
 		var topicXDR, topicDec, valDec []byte
@@ -286,33 +283,16 @@ func (s *postgresStore) StreamEventsCSV(ctx context.Context, contractID string, 
 		); err != nil {
 			return err
 		}
-
-		topicXDRStr := string(topicXDR)
-		topicDecStr := string(topicDec)
-		valDecStr := string(valDec)
-
-		record := []string{
-			e.ID,
-			e.ContractID,
-			e.Network,
-			fmt.Sprintf("%d", e.Ledger),
-			e.LedgerClosedAt.UTC().Format(time.RFC3339),
-			e.TxHash,
-			e.Type,
-			topicXDRStr,
-			e.ValueXDR,
-			topicDecStr,
-			valDecStr,
-			fmt.Sprintf("%t", e.InSuccessfulCall),
-		}
-		if err := csvWriter.Write(record); err != nil {
+		row = eventCSVRecord(e, string(topicXDR), string(topicDec), string(valDec))
+		if err := csvWriter.Write(row); err != nil {
 			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return csvWriter.Error()
+	// flushEventsCSV reports any buffered or flush-time write failure.
+	return nil
 }
 
 // ---- RecentEvents -----------------------------------------------------------
